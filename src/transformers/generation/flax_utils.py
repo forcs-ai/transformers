@@ -63,6 +63,7 @@ class FlaxGreedySearchOutput(ModelOutput):
     """
 
     sequences: jnp.ndarray = None
+    sot_logits: jnp.ndarray = None
 
 
 @flax.struct.dataclass
@@ -103,6 +104,7 @@ class GreedyState:
     running_token: jnp.ndarray
     is_sent_finished: jnp.ndarray
     model_kwargs: Dict[str, jnp.ndarray]
+    sot_logits: jnp.ndarray
 
 
 @flax.struct.dataclass
@@ -591,6 +593,9 @@ class FlaxGenerationMixin:
         # initialize model specific kwargs
         model_kwargs = self.prepare_inputs_for_generation(input_ids, max_length, **model_kwargs)
 
+        model_outputs = model(input_ids, params=params, **model_kwargs)
+        logits = model_outputs.logits[:, -1]
+
         # initialize state
         state = GreedyState(
             cur_len=cur_len,
@@ -598,6 +603,7 @@ class FlaxGenerationMixin:
             running_token=input_ids,
             is_sent_finished=is_sent_finished,
             model_kwargs=model_kwargs,
+            sot_logits=logits
         )
 
         def greedy_search_cond_fn(state):
@@ -629,6 +635,7 @@ class FlaxGenerationMixin:
                 running_token=next_token,
                 is_sent_finished=next_is_sent_finished,
                 model_kwargs=next_model_kwargs,
+                sot_logits=state.sot_logits
             )
 
         # The very first prompt often has sequence length > 1, so run outside of `lax.while_loop` to comply with TPU
@@ -640,7 +647,7 @@ class FlaxGenerationMixin:
         else:
             state = lax.while_loop(greedy_search_cond_fn, greedy_search_body_fn, state)
 
-        return FlaxGreedySearchOutput(sequences=state.sequences)
+        return FlaxGreedySearchOutput(sequences=state.sequences, sot_logits=state.sot_logits)
 
     def _sample(
         self,
